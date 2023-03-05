@@ -1,0 +1,7 @@
+.DS_Store
+*.mat
+*.fst
+*.txt
+*.int
+*.gz
+twpca/
