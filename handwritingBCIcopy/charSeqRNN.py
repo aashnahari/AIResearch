@@ -586,7 +586,7 @@ class charSeqRNN(object):
 
             # print variables in the checkpoint
             print('Loading from checkpoint: ' + checkpoint_path)
-            from tensorflow.contrib.framework.python.framework import checkpoint_utils
+            from tf.contrib.framework.python.framework import checkpoint_utils
 
             var_list_ckpt = checkpoint_utils.list_variables(checkpoint_path)
             var_names_ckpt = []
@@ -596,10 +596,10 @@ class charSeqRNN(object):
 
             # put together what variables we are going to load from what sources,
             # with special attention to how the inputFactors are determined
-            lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
+            #lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
             varDict = {}
-            for x in range(len(lv)):
-                varDict[lv[x].name[:-2]] = lv[x]
+            #for x in range(len(lv)):
+                #varDict[lv[x].name[:-2]] = lv[x]
 
             if self.args['mode'] == 'infer':
                 varDict['inputFactors_W_' + str(self.args['inferenceInputLayer'])] = self.inputFactors_W_all[0]
