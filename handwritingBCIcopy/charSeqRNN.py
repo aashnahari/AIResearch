@@ -9,10 +9,12 @@ import scipy.special
 import pickle
 from dataPreprocessing import prepareDataCubesForRNN
 import sys
+import pprint
 import tensorflow as tf
+
+tf.compat.v1.reset_default_graph()
 tf.compat.v1.disable_eager_execution()
 tf.config.optimizer.set_jit(False)
-tf.reset_default_graph()
 
 
 class charSeqRNN(object):
@@ -74,14 +76,15 @@ class charSeqRNN(object):
         if self.args['seed'] == -1:
             self.args['seed'] = datetime.now().microsecond
         np.random.seed(self.args['seed'])
-        tf.set_random_seed(self.args['seed'])
+        tf.compat.v1.set_random_seed(self.args['seed'])
 
-        config = tf.ConfigProto()
-        config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
-        self.sess = tf.Session(config=config)
+        config = tf.compat.v1.ConfigProto()
 
+        # Disable the arithmetic optimizer by setting the optimization_level to 0
+        config.graph_options.optimizer_options.opt_level = tf.compat.v1.OptimizerOptions.L0
         # Start tensorflow
-        self.sess = tf.Session()
+        self.sess = tf.compat.v1.Session(config=config)
+        self.sess.run(tf.global_variables_initializer())
 
         # --------------Dataset pipeline--------------
         # First we put the datasets on the graph. It's a bit tricky since we need to be able to select between different
@@ -219,9 +222,9 @@ class charSeqRNN(object):
         else:
             biDir = 1
 
-        self.rnnStartState = tf.get_variable('RNN_layer0/startState', [biDir, 1, self.args['nUnits']], dtype=tf.float32,
-                                             initializer=tf.zeros_initializer,
-                                             trainable=bool(self.args['trainableBackEnd']))
+        self.rnnStartState = tf.compat.v1.get_variable('RNN_layer0/startState', [biDir, 1, self.args['nUnits']],
+                                                       dtype=tf.float32, initializer=tf.zeros_initializer,
+                                                       trainable=bool(self.args['trainableBackEnd']))
 
         # tile the state across all elements of the minibatch
         initRNNState = tf.tile(self.rnnStartState, [1, self.args['batchSize'], 1])
@@ -234,19 +237,20 @@ class charSeqRNN(object):
         self.inputFactors_W_all = []
         self.inputFactors_b_all = []
         for inpLayerIdx in range(self.nInpLayers):
-            self.inputFactors_W_all.append(tf.get_variable("inputFactors_W_" + str(inpLayerIdx),
-                                                           initializer=np.identity(nInputs).astype(np.float32),
-                                                           trainable=bool(self.args['trainableInput'])))
+            self.inputFactors_W_all.append(tf.compat.v1.get_variable("inputFactors_W_" + str(inpLayerIdx),
+                                                                     initializer=np.identity(nInputs).astype(
+                                                                         np.float32),
+                                                                     trainable=bool(self.args['trainableInput'])))
 
-            self.inputFactors_b_all.append(tf.get_variable("inputFactors_b_" + str(inpLayerIdx),
-                                                           initializer=np.zeros([nInputs]).astype(np.float32),
-                                                           trainable=bool(self.args['trainableInput'])))
+            self.inputFactors_b_all.append(tf.compat.v1.get_variable("inputFactors_b_" + str(inpLayerIdx),
+                                                                     initializer=np.zeros([nInputs]).astype(np.float32),
+                                                                     trainable=bool(self.args['trainableInput'])))
 
         # Define the selector mechanism that chooses which input layer to use depending on which day we have selected
         # for the minibatch.
         def makeFactorsFunc(x):
             return lambda: (
-                self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
+            self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
 
         branchFuns_inpLayers = []
         for dayIdx in range(self.nDays):
@@ -260,7 +264,9 @@ class charSeqRNN(object):
                                       tf.tile(tf.expand_dims(inp_W, 0), [self.args['batchSize'], 1, 1])) + inp_b
 
         # Now define the two GRU layers. Layer 1, which runs at a high frequency:
-        self.rnnOutput, self.rnnWeightVars = cudnnGraphSingleLayer(self.args['nUnits'], initRNNState, self.inputFactors,
+        self.rnnOutput, self.rnnWeightVars = cudnnGraphSingleLayer(self.args['nUnits'],
+                                                                   initRNNState,
+                                                                   self.inputFactors,
                                                                    self.args['timeSteps'],
                                                                    self.args['batchSize'],
                                                                    nInputs,
@@ -270,56 +276,57 @@ class charSeqRNN(object):
         nSkipInputs = self.args['nUnits']
         skipLen = self.args['skipLen']
 
-        with tf.compat.v1.variable_scope("layer2"):
-            self.rnnOutput2, self.rnnWeightVars2 = cudnnGraphSingleLayer(self.args['nUnits'],
-                                                                         initRNNState,
-                                                                         self.rnnOutput[:, 0::skipLen, :],
-                                                                         self.args['timeSteps'] / skipLen,
-                                                                         self.args['batchSize'],
-                                                                         self.args['nUnits'] * biDir,
-                                                                         self.args['directionality'])
+        '''with tf.compat.v1.variable_scope("layer2"):
+            self.rnnOutput2, self.rnnWeightVars2 = cudnnGraphSingleLayer(self.args['nUnits'], 
+                                                                         initRNNState, 
+                                                                         self.rnnOutput[:,0::skipLen,:], 
+                                                                         self.args['timeSteps']/skipLen, 
+                                                                         self.args['batchSize'], 
+                                                                         self.args['nUnits']*biDir,  
+                                                                         self.args['directionality'])'''
 
         # Finally, define the linear readout layer.
-        self.readout_W = tf.get_variable("readout_W",
-                                         shape=[biDir * self.args['nUnits'], nOutputs],
-                                         initializer=tf.random_normal_initializer(dtype=tf.float32, stddev=0.05),
-                                         trainable=bool(self.args['trainableBackEnd']))
+        self.readout_W = tf.compat.v1.get_variable("readout_W",
+                                                   shape=[biDir * self.args['nUnits'], nOutputs],
+                                                   initializer=tf.random_normal_initializer(dtype=tf.float32,
+                                                                                            stddev=0.05),
+                                                   trainable=bool(self.args['trainableBackEnd']))
 
-        self.readout_b = tf.get_variable("readout_b",
-                                         shape=[nOutputs],
-                                         initializer=tf.zeros_initializer(dtype=tf.float32),
-                                         trainable=bool(self.args['trainableBackEnd']))
+        self.readout_b = tf.compat.v1.get_variable("readout_b",
+                                                   shape=[nOutputs],
+                                                   initializer=tf.zeros_initializer(dtype=tf.float32),
+                                                   trainable=bool(self.args['trainableBackEnd']))
 
         tiledReadoutWeights = tf.tile(tf.expand_dims(self.readout_W, 0), [self.args['batchSize'], 1, 1])
-        self.logitOutput_downsample = tf.matmul(self.rnnOutput2, tiledReadoutWeights) + self.readout_b
+        # self.logitOutput_downsample = tf.matmul(self.rnnOutput2, tiledReadoutWeights) + self.readout_b
 
         # Up-sample the outputs to the original time-resolution (needed b/c layer 2 is slower).
         expIdx = []
         for t in range(int(args['timeSteps'] / skipLen)):
             expIdx.append(np.zeros([skipLen]) + t)
         expIdx = np.concatenate(expIdx).astype(int)
-        self.logitOutput = tf.gather(self.logitOutput_downsample, expIdx, axis=1)
+        # self.logitOutput = tf.gather(self.logitOutput_downsample, expIdx, axis=1)
 
         # --------------Loss function--------------
         # here we accounting for the output delay
         labels = self.batchTargets[:, 0:-(args['outputDelay']), :]
-        logits = self.logitOutput[:, args['outputDelay']:, :]
+        # logits = self.logitOutput[:,args['outputDelay']:,:]
         bw = self.batchWeight[:, 0:-(args['outputDelay'])]
 
         # character transition signal is the last column, which has a separate loss
-        transOut = logits[:, :, -1]
+        # transOut = logits[:,:,-1]
         transLabel = labels[:, :, -1]
 
-        logits = logits[:, :, 0:-1]
+        # logits = logits[:,:,0:-1]
         labels = labels[:, :, 0:-1]
 
         # cross-entropy character probability loss
-        ceLoss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=labels, logits=logits)
-        self.totalErr = tf.reduce_mean(tf.reduce_sum(bw * ceLoss, axis=1) / self.args['timeSteps'])
+        # ceLoss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=labels, logits=logits)
+        #        self.totalErr = tf.reduce_mean(tf.reduce_sum(bw*ceLoss,axis=1)/self.args['timeSteps'])
 
         # character start signal loss
-        sqErrLoss = tf.square(tf.sigmoid(transOut) - transLabel)
-        self.totalErr += 5 * tf.reduce_mean(tf.reduce_sum(sqErrLoss, axis=1) / self.args['timeSteps'])
+        # sqErrLoss = tf.square(tf.sigmoid(transOut)-transLabel)
+        # self.totalErr += 5*tf.reduce_mean(tf.reduce_sum(sqErrLoss,axis=1)/self.args['timeSteps'])
 
         # L2 regularizer
         weightVars = [self.readout_W]
@@ -327,7 +334,7 @@ class charSeqRNN(object):
             weightVars.append(self.inputFactors_W_all[inpIdx])
 
         weightVars.extend(self.rnnWeightVars)
-        weightVars.extend(self.rnnWeightVars2)
+        # weightVars.extend(self.rnnWeightVars2)
 
         self.l2cost = tf.zeros(1, dtype=tf.float32)
         if self.args['l2scale'] > 0:
@@ -335,7 +342,7 @@ class charSeqRNN(object):
                 self.l2cost = self.l2cost + tf.reduce_sum(tf.square(weightVars[x]))
 
         # total cost
-        self.totalCost = self.totalErr + self.l2cost * self.args['l2scale']
+        # self.totalCost = self.totalErr + self.l2cost*self.args['l2scale']
 
         # --------------Gradient descent--------------
         # prepare gradients and optimizer
@@ -344,28 +351,28 @@ class charSeqRNN(object):
         # option to only allow the input layers to train
         if not bool(self.args['trainableBackEnd']):
             tvars.remove(self.rnnWeightVars[0])
-            tvars.remove(self.rnnWeightVars2[0])
+            # tvars.remove(self.rnnWeightVars2[0])
 
         # clip gradients to a maximum value of 10
-        grads = tf.gradients(self.totalCost, tvars)
-        grads, self.grad_global_norm = tf.clip_by_global_norm(grads, 10)
+        #        grads = tf.gradients(self.totalCost, tvars)
+        #    grads, self.grad_global_norm = tf.clip_by_global_norm(grads, 10)
 
         # optimization routine & learning rate
-        learnRate = tf.get_variable('learnRate', dtype=tf.float32, initializer=1.0, trainable=False)
-        opt = tf.train.AdamOptimizer(learnRate, beta1=0.9, beta2=0.999,
-                                     epsilon=1e-01)
+        learnRate = tf.compat.v1.get_variable('learnRate', dtype=tf.float32, initializer=1.0, trainable=False)
+        opt = tf.compat.v1.train.AdamOptimizer(learnRate, beta1=0.9, beta2=0.999,
+                                               epsilon=1e-01)
 
         self.new_lr = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
         self.lr_update = tf.assign(learnRate, self.new_lr)
 
         # check if gradients are finite; if not, don't apply
         allIsFinite = []
-        for g in grads:
-            if g != None:
-                allIsFinite.append(tf.reduce_all(tf.is_finite(g)))
-        gradIsFinite = tf.reduce_all(tf.stack(allIsFinite))
-        self.train_op = tf.cond(gradIsFinite, lambda: opt.apply_gradients(
-            zip(grads, tvars), global_step=tf.train.get_or_create_global_step()), lambda: tf.no_op())
+        #  for g in grads:
+        #  if g != None:
+        #     allIsFinite.append(tf.reduce_all(tf.is_finite(g)))
+        #  gradIsFinite = tf.reduce_all(tf.stack(allIsFinite))
+        #  self.train_op = tf.cond(gradIsFinite, lambda: opt.apply_gradients(
+        #   zip(grads, tvars), global_step=tf.compat.v1.train.get_or_create_global_step()), lambda: tf.no_op())
 
         # Initialize all variables in the model, potentially loading them if self.loadingInitParams==True
         self._loadAndInitializeVariables()
@@ -375,7 +382,7 @@ class charSeqRNN(object):
         The main training loop, which we have implemented manually here. Each loop makes a single call to sess.run to execute
         one minibatch. ALong the way, we periodically save the model and performance statistics.
         """
-        saver = tf.train.Saver(max_to_keep=self.args['nCheckToKeep'])
+        saver = tf.compat.v1.train.Saver(max_to_keep=self.args['nCheckToKeep'])
 
         # Prepare to save performance data from each batch.
         batchTrainStats = np.zeros([self.args['nBatchesToTrain'], 6])
@@ -406,162 +413,26 @@ class charSeqRNN(object):
             dayNum = np.argwhere(np.random.multinomial(1, self.dayProbability))[0][0]
             datasetNum = 2 * dayNum  # 2*dayNum selects the train partition (as opposed to 2*dayNum + 1)
 
-            runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True,
-                                             doGradientUpdate=True)
+            #    runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True, doGradientUpdate=True)
 
             # compute the frame-by-frame accuracy for this batch
-            trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
-                                            runResultsTrain['targets'],
-                                            runResultsTrain['batchWeight'],
-                                            self.args['outputDelay'])
+            #    trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
+            #                                  runResultsTrain['targets'],
+            #                                  runResultsTrain['batchWeight'],
+            #                                  self.args['outputDelay'])
 
             # record useful statistics about this minibatch
             totalSeconds = (datetime.now() - dtStart).total_seconds()
-            batchTrainStats[i, :] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds,
-                                     dayNum]
+            #      batchTrainStats[i,:] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds, dayNum]
 
             # every once in a while, run a validation batch (i.e., run the RNN on the test partition to see how we're doing)
             if i % self.args['batchesPerVal'] == 0:
                 valSetIdx = int(i / self.args['batchesPerVal'])
-                batchValStats[valSetIdx, 0:4], outputSnapshot = self._validationDiagnostics(i,
-                                                                                            self.args['batchesPerVal'],
-                                                                                            lr,
-                                                                                            totalSeconds,
-                                                                                            runResultsTrain, trainAcc)
+            #    batchValStats[valSetIdx,0:4], outputSnapshot = self._validationDiagnostics(i, self.args['batchesPerVal'], lr,
+            #                                                                              totalSeconds, runResultsTrain, trainAcc)
 
-                # save a snapshot of key RNN outputs/variables so an outside program can plot them if desired
-                scipy.io.savemat(self.args['outputDir'] + '/outputSnapshot', outputSnapshot)
-
-            # save performance statistics and model parameters every so often
-            if i >= (self.startingBatchNum + self.args['batchesPerSave'] - 1) and i % self.args['batchesPerSave'] == 0:
-                scipy.io.savemat(self.args['outputDir'] + '/intermediateOutput', {'batchTrainStats': batchTrainStats,
-                                                                                  'batchValStats': batchValStats})
-
-            if i % self.args['batchesPerModelSave'] == 0:
-                print('SAVING MODEL')
-                saver.save(self.sess, self.args['outputDir'] + '/model.ckpt', global_step=i, write_meta_graph=False)
-
-            i += 1
-
-        # save final training statistics over all batches & final model
-        scipy.io.savemat(self.args['outputDir'] + '/finalOutput', {'batchTrainStats': batchTrainStats,
-                                                                   'batchValStats': batchValStats})
-
-        print('SAVING FINAL MODEL')
-        saver.save(self.sess, self.args['outputDir'] + '/model.ckpt', global_step=i, write_meta_graph=False)
-    def inference(self):
-        """
-        Runs the RNN on the entire dataset once and returns the result - used at inference time for performance evaluation.
-        """
-
-        # Compute how many total batches we'll need to run through before we go through everything once
-        self.nBatchesForInference = np.ceil(self.nTrialsInFirstDataset / self.args['batchSize']).astype(int)
-
-        # run through the entire dataset once
-        allOutputs = []
-        allUnits = []
-        allInputFeatures = []
-
-        print('Starting inference.')
-
-        for x in range(self.nBatchesForInference):
-            returnDict = self._runBatch(datasetNum=0, dayNum=0, lr=0, computeGradient=False, doGradientUpdate=False)
-
-            allOutputs.append(returnDict['logitOutput'])
-            allInputFeatures.append(returnDict['inputFeatures'])
-            allUnits.append(returnDict['output'])
-
-        print('Done with inference.')
-
-        # concatenate all batches and return
-        allOutputs = np.concatenate(allOutputs, axis=0)
-        allUnits = np.concatenate(allUnits, axis=0)
-        allInputFeatures = np.concatenate(allInputFeatures, axis=0)
-
-        # trim to original size in case the total number of sentences is not a multiple of the batch size
-        allOutputs = allOutputs[0:self.nTrialsInFirstDataset, :, :]
-        allUnits = allUnits[0:self.nTrialsInFirstDataset, :, :]
-        allInputFeatures = allInputFeatures[0:self.nTrialsInFirstDataset, :, :]
-
-        retDict = {}
-        retDict['outputs'] = allOutputs
-        retDict['units'] = allUnits
-        retDict['inputFeatures'] = allInputFeatures
-
-        saveDict = {}
-        saveDict['outputs'] = allOutputs
-
-        if self.args['inferenceOutputFileName'] != 'None':
-            scipy.io.savemat(self.args['inferenceOutputFileName'], saveDict)
-
-        return retDict
-
-    def _validationDiagnostics(self, i, nBatchesPerVal, lr, totalSeconds, runResultsTrain, trainAcc):
-        """
-        Runs a single minibatch on the validation data and returns performance statistics and a snapshot of key variables for
-        diagnostic purposes. The snapshot file can be loaded and plotted by an outside program for real-time feedback of how
-        the training process is going.
-        """
-        # Randomly select a day that has validation data; if there is no validation data, then just use the last days' training data
-        if self.daysWithValData == []:
-            dayNum = self.nDays - 1
-            datasetNum = dayNum * 2
-        else:
-            randIdx = np.random.randint(len(self.daysWithValData))
-            dayNum = self.daysWithValData[randIdx]
-            datasetNum = 1 + dayNum * 2  # odd numbers are the validation partitions
-
-        runResults = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True,
-                                    doGradientUpdate=False)
-
-        valAcc = computeFrameAccuracy(runResults['logitOutput'],
-                                      runResults['targets'],
-                                      runResults['batchWeight'],
-                                      self.args['outputDelay'])
-
-        print('Val Batch: ' + str(i) + '/' + str(self.args['nBatchesToTrain']) + ', valErr: ' + str(
-            runResults['err']) + ', trainErr: ' + str(runResultsTrain['err']) + ', Val Acc.: ' + str(
-            valAcc) + ', Train Acc.: ' + str(trainAcc) + ', grad: ' + str(
-            runResults['gradNorm']) + ', learnRate: ' + str(lr) + ', time: ' + str(totalSeconds))
-
-        outputSnapshot = {}
-        outputSnapshot['inputs'] = runResults['inputFeatures'][0, :, :]
-        outputSnapshot['rnnUnits'] = runResults['output'][0, :, :]
-        outputSnapshot['charProbOutput'] = runResults['logitOutput'][0, :, 0:-1]
-        outputSnapshot['charStartOutput'] = scipy.special.expit(
-            runResults['logitOutput'][0, self.args['outputDelay']:, -1])
-        outputSnapshot['charProbTarget'] = runResults['targets'][0, :, 0:-1]
-        outputSnapshot['charStartTarget'] = runResults['targets'][0, :, -1]
-        outputSnapshot['errorWeight'] = runResults['batchWeight'][0, :]
-
-        return [i, runResults['err'], runResults['gradNorm'], valAcc], outputSnapshot
-            datasetNum = 2 * dayNum  # 2*dayNum selects the train partition (as opposed to 2*dayNum + 1)
-
-            runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True,
-                                             doGradientUpdate=True)
-
-            # compute the frame-by-frame accuracy for this batch
-            trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
-                                            runResultsTrain['targets'],
-                                            runResultsTrain['batchWeight'],
-                                            self.args['outputDelay'])
-
-            # record useful statistics about this minibatch
-            totalSeconds = (datetime.now() - dtStart).total_seconds()
-            batchTrainStats[i, :] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds,
-                                     dayNum]
-
-            # every once in a while, run a validation batch (i.e., run the RNN on the test partition to see how we're doing)
-            if i % self.args['batchesPerVal'] == 0:
-                valSetIdx = int(i / self.args['batchesPerVal'])
-                batchValStats[valSetIdx, 0:4], outputSnapshot = self._validationDiagnostics(i,
-                                                                                            self.args['batchesPerVal'],
-                                                                                            lr,
-                                                                                            totalSeconds,
-                                                                                            runResultsTrain, trainAcc)
-
-                # save a snapshot of key RNN outputs/variables so an outside program can plot them if desired
-                scipy.io.savemat(self.args['outputDir'] + '/outputSnapshot', outputSnapshot)
+            # save a snapshot of key RNN outputs/variables so an outside program can plot them if desired
+            #   scipy.io.savemat(self.args['outputDir']+'/outputSnapshot', outputSnapshot)
 
             # save performance statistics and model parameters every so often
             if i >= (self.startingBatchNum + self.args['batchesPerSave'] - 1) and i % self.args['batchesPerSave'] == 0:
@@ -763,108 +634,106 @@ class charSeqRNN(object):
                 self.startingBatchNum = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
                 self.startingBatchNum += 1
 
-        def _loadAllDatasets(self):
-            """
-            Loads the labels & data for each day specified in the training args, and returns the relevant variables as data cubes.
-            Also collects the file names of all .tfrecord files needed for including the synthetic data.
-            """
-            neuralCube_all = []
-            targets_all = []
-            errWeights_all = []
-            numBinsPerTrial_all = []
-            cvIdx_all = []
-            recordFileSet_all = []
+    def _loadAllDatasets(self):
+        """
+        Loads the labels & data for each day specified in the training args, and returns the relevant variables as data cubes.
+        Also collects the file names of all .tfrecord files needed for including the synthetic data.
+        """
+        neuralCube_all = []
+        targets_all = []
+        errWeights_all = []
+        numBinsPerTrial_all = []
+        cvIdx_all = []
+        recordFileSet_all = []
 
-            for dayIdx in range(self.nDays):
-                neuralData, targets, errWeights, binsPerTrial, cvIdx = prepareDataCubesForRNN(
-                    self.args['sentencesFile_' + str(dayIdx)],
-                    self.args['singleLettersFile_' + str(dayIdx)],
-                    self.args['labelsFile_' + str(dayIdx)],
-                    self.args['cvPartitionFile_' + str(dayIdx)],
-                    self.args['sessionName_' + str(dayIdx)],
-                    self.args['rnnBinSize'],
-                    self.args['timeSteps'],
-                    self.isTraining)
+        for dayIdx in range(self.nDays):
+            neuralData, targets, errWeights, binsPerTrial, cvIdx = prepareDataCubesForRNN(
+                self.args['sentencesFile_' + str(dayIdx)],
+                self.args['singleLettersFile_' + str(dayIdx)],
+                self.args['labelsFile_' + str(dayIdx)],
+                self.args['cvPartitionFile_' + str(dayIdx)],
+                self.args['sessionName_' + str(dayIdx)],
+                self.args['rnnBinSize'],
+                self.args['timeSteps'],
+                self.isTraining)
 
-                neuralCube_all.append(neuralData)
-                targets_all.append(targets)
-                errWeights_all.append(errWeights)
-                numBinsPerTrial_all.append(binsPerTrial)
-                cvIdx_all.append(cvIdx)
+            neuralCube_all.append(neuralData)
+            targets_all.append(targets)
+            errWeights_all.append(errWeights)
+            numBinsPerTrial_all.append(binsPerTrial)
+            cvIdx_all.append(cvIdx)
 
-                synthDir = self.args['syntheticDatasetDir_' + str(dayIdx)]
-                if os.path.isdir(synthDir):
-                    recordFileSet = [os.path.join(synthDir, file) for file in os.listdir(synthDir)]
-                else:
-                    recordFileSet = []
+            synthDir = self.args['syntheticDatasetDir_' + str(dayIdx)]
+            if os.path.isdir(synthDir):
+                recordFileSet = [os.path.join(synthDir, file) for file in os.listdir(synthDir)]
+            else:
+                recordFileSet = []
 
-                if self.args['synthBatchSize'] > 0 and len(recordFileSet) == 0:
-                    sys.exit('Error! No synthetic files found in directory ' + self.args[
-                        'syntheticDatasetDir_' + str(dayIdx)] + ', exiting.')
+            if self.args['synthBatchSize'] > 0 and len(recordFileSet) == 0:
+                sys.exit('Error! No synthetic files found in directory ' + self.args[
+                    'syntheticDatasetDir_' + str(dayIdx)] + ', exiting.')
 
-                random.shuffle(recordFileSet)
-                recordFileSet_all.append(recordFileSet)
+            random.shuffle(recordFileSet)
+            recordFileSet_all.append(recordFileSet)
 
-            return neuralCube_all, targets_all, errWeights_all, numBinsPerTrial_all, cvIdx_all, recordFileSet_all
+        return neuralCube_all, targets_all, errWeights_all, numBinsPerTrial_all, cvIdx_all, recordFileSet_all
 
-        def _makeTrainingDatasetFromRealData(self, inputs, targets, errWeight, numBinsPerTrial, batchSize,
-                                             addNoise=True):
-            """
-            This function creates a tensorflow 'dataset' from the real data given as input. Implements random
-            extraction of data snippets from the full sentences and the optional addition of training noise of various kinds.
+    def _makeTrainingDatasetFromRealData(self, inputs, targets, errWeight, numBinsPerTrial, batchSize, addNoise=True):
+        """
+        This function creates a tensorflow 'dataset' from the real data given as input. Implements random
+        extraction of data snippets from the full sentences and the optional addition of training noise of various kinds.
 
-            Args:
-                inputs (tensor : B x T x N): A 3d tensor of RNN inputs with batch size B, time steps T, and number of input features N
-                targets (tensor : B x T x C): A 3d tensor of RNN targets with batch size B, time steps T, and number of targets C
-                errWeight (tensor : B x T): A 2d tensor of error weights for each time step of data
-                numBinsPerTrial (tensor : B): A 1d tensor describing the true length of each sentence in the batch (data is zero-padded)
-                batchSize (int): Size of the mini-batch to construct
+        Args:
+            inputs (tensor : B x T x N): A 3d tensor of RNN inputs with batch size B, time steps T, and number of input features N
+            targets (tensor : B x T x C): A 3d tensor of RNN targets with batch size B, time steps T, and number of targets C
+            errWeight (tensor : B x T): A 2d tensor of error weights for each time step of data
+            numBinsPerTrial (tensor : B): A 1d tensor describing the true length of each sentence in the batch (data is zero-padded)
+            batchSize (int): Size of the mini-batch to construct
 
-            Returns:
-                iterator (tensorflow iterator): A dataset iterator that can be used to pull new minibatches
-            """
-            newDataset = tf.data.Dataset.from_tensor_slices((inputs.astype(np.float32),
-                                                             targets.astype(np.float32),
-                                                             errWeight.astype(np.float32),
-                                                             numBinsPerTrial.astype(np.int32)))
+        Returns:
+            iterator (tensorflow iterator): A dataset iterator that can be used to pull new minibatches
+        """
+        newDataset = tf.data.Dataset.from_tensor_slices((inputs.astype(np.float32),
+                                                         targets.astype(np.float32),
+                                                         errWeight.astype(np.float32),
+                                                         numBinsPerTrial.astype(np.int32)))
 
-            newDataset = newDataset.apply(tf.contrib.data.shuffle_and_repeat(batchSize * 4))
+        newDataset = newDataset.apply(tf.contrib.data.shuffle_and_repeat(batchSize * 4))
 
-            mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: extractSentenceSnippet(inputs,
-                                                                                                targets,
-                                                                                                errWeight,
-                                                                                                numBinsPerTrial,
-                                                                                                self.args['timeSteps'],
-                                                                                                self.args[
-                                                                                                    'directionality'])
+        mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: extractSentenceSnippet(inputs,
+                                                                                            targets,
+                                                                                            errWeight,
+                                                                                            numBinsPerTrial,
+                                                                                            self.args['timeSteps'],
+                                                                                            self.args['directionality'])
+        newDataset = newDataset.map(mapFun)
+
+        if addNoise and (self.args['constantOffsetSD'] > 0 or self.args['randomWalkSD'] > 0):
+            mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: addMeanNoise(inputs,
+                                                                                      targets,
+                                                                                      errWeight,
+                                                                                      numBinsPerTrial,
+                                                                                      self.args['constantOffsetSD'],
+                                                                                      self.args['randomWalkSD'],
+                                                                                      self.args['timeSteps'])
             newDataset = newDataset.map(mapFun)
 
-            if addNoise and (self.args['constantOffsetSD'] > 0 or self.args['randomWalkSD'] > 0):
-                mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: addMeanNoise(inputs,
-                                                                                          targets,
-                                                                                          errWeight,
-                                                                                          numBinsPerTrial,
-                                                                                          self.args['constantOffsetSD'],
-                                                                                          self.args['randomWalkSD'],
-                                                                                          self.args['timeSteps'])
-                newDataset = newDataset.map(mapFun)
+        if addNoise and self.args['whiteNoiseSD'] > 0:
+            mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: addWhiteNoise(inputs,
+                                                                                       targets,
+                                                                                       errWeight,
+                                                                                       numBinsPerTrial,
+                                                                                       self.args['whiteNoiseSD'],
+                                                                                       self.args['timeSteps'])
+            newDataset = newDataset.map(mapFun)
 
-            if addNoise and self.args['whiteNoiseSD'] > 0:
-                mapFun = lambda inputs, targets, errWeight, numBinsPerTrial: addWhiteNoise(inputs,
-                                                                                           targets,
-                                                                                           errWeight,
-                                                                                           numBinsPerTrial,
-                                                                                           self.args['whiteNoiseSD'],
-                                                                                           self.args['timeSteps'])
-                newDataset = newDataset.map(mapFun)
+        newDataset = newDataset.batch(batchSize)
+        newDataset = newDataset.prefetch(1)
 
-            newDataset = newDataset.batch(batchSize)
-            newDataset = newDataset.prefetch(1)
+        iterator = newDataset.make_initializable_iterator()
+        self.sess.run(iterator.initializer)
 
-            iterator = newDataset.make_initializable_iterator()
-            self.sess.run(iterator.initializer)
-
-            return iterator
+        return iterator
 
 
 def extractSentenceSnippet(inputs, targets, errWeight, numBinsPerTrial, nSteps, directionality):
@@ -949,25 +818,6 @@ def parseDataset(singleExample, nSteps, nInputs, nClasses, whiteNoiseSD=0.0, con
     return parsedFeatures["inputs"] + noise, parsedFeatures["labels"], parsedFeatures["errWeights"]
 
 
-'''def cudnnGraphSingleLayer(nUnits, initRNNState, batchInputs, nSteps, nBatch, nInputs, direction):
-    """
-    Construct a single GRU layer using tensorflow cudnn calls for speed and define the shape before runtime. 
-    Also return the weights so we can do L2 regularization.
-    """
-    nLayers = 1
-    rnn = tf.nn.dynamic_rnn(cell = tf.nn.rnn_cell.GRUCell(nUnits), inputs = batchInputs, dtype = tf.float32)
-
-    inputSize = [nSteps, nBatch, nInputs]
-    rnn.build(inputSize)
-
-    #taking care to transpose the inputs and outputs for compatability with the rest of the code which is batch-first
-    rnnInput = tf.transpose(batchInputs,[1,0,2])
-    y_rnn, state_rnn = rnn(rnnInput, initial_state=(initRNNState,))
-    y_rnn = tf.transpose(y_rnn,[1,0,2])
-
-    return y_rnn, [rnn.weights[0]]'''
-
-
 def cudnnGraphSingleLayer(nUnits, initRNNState, batchInputs, nSteps, nBatch, nInputs, direction):
     """
     Construct a single GRU layer using tensorflow cudnn calls for speed and define the shape before runtime.
@@ -993,7 +843,8 @@ def cudnnGraphSingleLayer(nUnits, initRNNState, batchInputs, nSteps, nBatch, nIn
     # y = tf.transpose(y, [1, 0, 2])
 
     return y, rnn_layer.get_weights()[0]
-                    
+
+
 def gaussSmooth(inputs, kernelSD):
     """
     Applies a 1D gaussian smoothing operation with tensorflow to smooth the data along the time axis.
@@ -1169,7 +1020,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args = vars(args)
-    argDict = pickle.load(open(args['argsFile'], "rb"))
+    argDict = pickle.load(open(
+        '/Users/aashnahari/AIResearch/handwritingBCIDatacopy/RNNTrainingSteps/Step4_RNNTraining/HeldOutTrials/args.p',
+        "rb"))
 
     # set the visible device to the gpu specified in 'args' (otherwise tensorflow will steal all the GPUs)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
