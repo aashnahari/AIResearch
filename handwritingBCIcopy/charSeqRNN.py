@@ -412,23 +412,23 @@ class charSeqRNN(object):
             runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True, doGradientUpdate=True)
 
             # compute the frame-by-frame accuracy for this batch
-            #    trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
-            #                                  runResultsTrain['targets'],
-            #                                  runResultsTrain['batchWeight'],
-            #                                  self.args['outputDelay'])
+                trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
+                                              runResultsTrain['targets'],
+                                              runResultsTrain['batchWeight'],
+                                              self.args['outputDelay'])
 
             # record useful statistics about this minibatch
             totalSeconds = (datetime.now() - dtStart).total_seconds()
-            #      batchTrainStats[i,:] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds, dayNum]
+                  batchTrainStats[i,:] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds, dayNum]
 
             # every once in a while, run a validation batch (i.e., run the RNN on the test partition to see how we're doing)
             if i % self.args['batchesPerVal'] == 0:
                 valSetIdx = int(i / self.args['batchesPerVal'])
-            #    batchValStats[valSetIdx,0:4], outputSnapshot = self._validationDiagnostics(i, self.args['batchesPerVal'], lr,
+                batchValStats[valSetIdx,0:4], outputSnapshot = self._validationDiagnostics(i, self.args['batchesPerVal'], lr,
             #                                                                              totalSeconds, runResultsTrain, trainAcc)
 
             # save a snapshot of key RNN outputs/variables so an outside program can plot them if desired
-            #   scipy.io.savemat(self.args['outputDir']+'/outputSnapshot', outputSnapshot)
+               scipy.io.savemat(self.args['outputDir']+'/outputSnapshot', outputSnapshot)
 
             # save performance statistics and model parameters every so often
             if i >= (self.startingBatchNum + self.args['batchesPerSave'] - 1) and i % self.args['batchesPerSave'] == 0:
@@ -590,14 +590,14 @@ class charSeqRNN(object):
             var_names_ckpt = []
             for v in var_list_ckpt:
                 var_names_ckpt.append(v[0])
-                # print(v)
+                print(v)
 
             # put together what variables we are going to load from what sources,
             # with special attention to how the inputFactors are determined
             #lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
             varDict = {}
-            #for x in range(len(lv)):
-                #varDict[lv[x].name[:-2]] = lv[x]
+            for x in range(len(lv)):
+                varDict[lv[x].name[:-2]] = lv[x]
 
             if self.args['mode'] == 'infer':
                 varDict['inputFactors_W_' + str(self.args['inferenceInputLayer'])] = self.inputFactors_W_all[0]
