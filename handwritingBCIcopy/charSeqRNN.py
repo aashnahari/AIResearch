@@ -412,23 +412,23 @@ class charSeqRNN(object):
             runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True, doGradientUpdate=True)
 
             # compute the frame-by-frame accuracy for this batch
-                trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
+            trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
                                               runResultsTrain['targets'],
                                               runResultsTrain['batchWeight'],
                                               self.args['outputDelay'])
 
             # record useful statistics about this minibatch
             totalSeconds = (datetime.now() - dtStart).total_seconds()
-                  batchTrainStats[i,:] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds, dayNum]
+            batchTrainStats[i,:] = [i, runResultsTrain['err'], runResultsTrain['gradNorm'], trainAcc, totalSeconds, dayNum]
 
             # every once in a while, run a validation batch (i.e., run the RNN on the test partition to see how we're doing)
             if i % self.args['batchesPerVal'] == 0:
                 valSetIdx = int(i / self.args['batchesPerVal'])
                 batchValStats[valSetIdx,0:4], outputSnapshot = self._validationDiagnostics(i, self.args['batchesPerVal'], lr,
-            #                                                                              totalSeconds, runResultsTrain, trainAcc)
+                                                                                          totalSeconds, runResultsTrain, trainAcc)
 
             # save a snapshot of key RNN outputs/variables so an outside program can plot them if desired
-               scipy.io.savemat(self.args['outputDir']+'/outputSnapshot', outputSnapshot)
+                scipy.io.savemat(self.args['outputDir']+'/outputSnapshot', outputSnapshot)
 
             # save performance statistics and model parameters every so often
             if i >= (self.startingBatchNum + self.args['batchesPerSave'] - 1) and i % self.args['batchesPerSave'] == 0:
