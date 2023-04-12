@@ -540,8 +540,7 @@ class charSeqRNN(object):
         Makes a single call to sess.run to execute one minibatch. Note that datasetNum and dayNum must be specified so we know
         which dataset to pull from (datasetNum) and which input layer to use (dayNum).
         """
-        print("Dataset number before feeding:", datasetNum)
-        print("Day number before feeding:", dayNum)
+
         fd = {self.new_lr: lr, self.datasetNumPH: int(datasetNum), self.dayNumPH: int(dayNum)}
         runOps = [self.totalErr, self.batchInputs, self.rnnOutput, self.batchTargets, self.logitOutput,
                   self.batchWeight]
@@ -594,7 +593,7 @@ class charSeqRNN(object):
 
             # put together what variables we are going to load from what sources,
             # with special attention to how the inputFactors are determined
-            #lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
+            lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
             varDict = {}
             for x in range(len(lv)):
                 varDict[lv[x].name[:-2]] = lv[x]
