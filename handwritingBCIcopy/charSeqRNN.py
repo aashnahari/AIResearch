@@ -9,12 +9,11 @@ import scipy.special
 import pickle
 from dataPreprocessing import prepareDataCubesForRNN
 import sys
-import pprint
 import tensorflow as tf
 
-tf.compat.v1.reset_default_graph()
-tf.compat.v1.disable_eager_execution()
-tf.config.optimizer.set_jit(False)
+tf.reset_default_graph()
+#tf.disable_eager_execution()
+#tf.config.optimizer.set_jit(False)
 
 
 class charSeqRNN(object):
@@ -61,7 +60,7 @@ class charSeqRNN(object):
             if 'labelsFile_' + str(t) not in self.args.keys():
                 self.nDays = t
                 break
-
+        # TODO: remember to remove belowc
         # load data, labels, train/test partitions & synthetic .tfrecord files for all days
         neuralCube_all, targets_all, errWeights_all, numBinsPerTrial_all, cvIdx_all, recordFileSet_all = self._loadAllDatasets()
 
@@ -76,14 +75,14 @@ class charSeqRNN(object):
         if self.args['seed'] == -1:
             self.args['seed'] = datetime.now().microsecond
         np.random.seed(self.args['seed'])
-        tf.compat.v1.set_random_seed(self.args['seed'])
+        tf.set_random_seed(self.args['seed'])
 
-        config = tf.compat.v1.ConfigProto()
+        config = tf.ConfigProto()
 
         # Disable the arithmetic optimizer by setting the optimization_level to 0
-        config.graph_options.optimizer_options.opt_level = tf.compat.v1.OptimizerOptions.L0
+        config.graph_options.optimizer_options.opt_level = tf.OptimizerOptions.L0
         # Start tensorflow
-        self.sess = tf.compat.v1.Session(config=config)
+        self.sess = tf.Session(config=config)
         self.sess.run(tf.global_variables_initializer())
 
         # --------------Dataset pipeline--------------
@@ -199,13 +198,12 @@ class charSeqRNN(object):
         def makeTrainDatasetFunc(x):
             return lambda: combineSynthAndReal(allSynthIterators[x], allRealIterators[x])
 
-        branchFuns = []
+        pred_fn_pairs = []
         for datIdx in range(self.nDays):
-            branchFuns.extend([makeTrainDatasetFunc(datIdx), makeValDatasetFunc(datIdx)])
+            pred_fn_pairs.append((tf.equal(self.datasetNumPH, datIdx), makeTrainDatasetFunc(datIdx)))
+            pred_fn_pairs.append((tf.equal(self.datasetNumPH, self.nDays + datIdx), makeValDatasetFunc(datIdx)))
 
-        # These variables ('batchInputs', 'batchTargets', 'batchWeight') are the output of the day-selector mechanism
-        # and are all that is needed moving forward to define the RNN cost function.
-        self.batchInputs, self.batchTargets, self.batchWeight = tf.switch_case(self.datasetNumPH, branchFuns)
+        self.batchInputs, self.batchTargets, self.batchWeight = tf.case(pred_fn_pairs, exclusive=True)
 
         self.batchWeight.set_shape([self.args['batchSize'], self.args['timeSteps']])
         self.batchInputs.set_shape([self.args['batchSize'], self.args['timeSteps'], nInputs])
@@ -222,7 +220,7 @@ class charSeqRNN(object):
         else:
             biDir = 1
 
-        self.rnnStartState = tf.compat.v1.get_variable('RNN_layer0/startState', [biDir, 1, self.args['nUnits']],
+        self.rnnStartState = tf.get_variable('RNN_layer0/startState', [biDir, 1, self.args['nUnits']],
                                                        dtype=tf.float32, initializer=tf.zeros_initializer,
                                                        trainable=bool(self.args['trainableBackEnd']))
 
@@ -237,12 +235,12 @@ class charSeqRNN(object):
         self.inputFactors_W_all = []
         self.inputFactors_b_all = []
         for inpLayerIdx in range(self.nInpLayers):
-            self.inputFactors_W_all.append(tf.compat.v1.get_variable("inputFactors_W_" + str(inpLayerIdx),
+            self.inputFactors_W_all.append(tf.get_variable("inputFactors_W_" + str(inpLayerIdx),
                                                                      initializer=np.identity(nInputs).astype(
                                                                          np.float32),
                                                                      trainable=bool(self.args['trainableInput'])))
 
-            self.inputFactors_b_all.append(tf.compat.v1.get_variable("inputFactors_b_" + str(inpLayerIdx),
+            self.inputFactors_b_all.append(tf.get_variable("inputFactors_b_" + str(inpLayerIdx),
                                                                      initializer=np.zeros([nInputs]).astype(np.float32),
                                                                      trainable=bool(self.args['trainableInput'])))
 
@@ -250,14 +248,13 @@ class charSeqRNN(object):
         # for the minibatch.
         def makeFactorsFunc(x):
             return lambda: (
-            self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
+                self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
 
-        branchFuns_inpLayers = []
+        pred_fn_pairs_inpLayers = []
         for dayIdx in range(self.nDays):
-            branchFuns_inpLayers.append(makeFactorsFunc(dayIdx))
+            pred_fn_pairs_inpLayers.append((tf.equal(self.dayNumPH, dayIdx), makeFactorsFunc(dayIdx)))
 
-        # inp_W and inp_b are the chosen input layer variables
-        inp_W, inp_b = tf.switch_case(self.dayNumPH, branchFuns_inpLayers)
+        inp_W, inp_b = tf.case(pred_fn_pairs_inpLayers, exclusive=True)
 
         # 'inputFactors' are the transformed inputs which should now be in a common space across days.
         self.inputFactors = tf.matmul(self.batchInputs,
@@ -276,57 +273,56 @@ class charSeqRNN(object):
         nSkipInputs = self.args['nUnits']
         skipLen = self.args['skipLen']
 
-        '''with tf.compat.v1.variable_scope("layer2"):
+        with tf.variable_scope("layer2"):
             self.rnnOutput2, self.rnnWeightVars2 = cudnnGraphSingleLayer(self.args['nUnits'], 
                                                                          initRNNState, 
-                                                                         self.rnnOutput[:,0::skipLen,:], 
+                                                                         self.rnnOutput[:, 0::skipLen, :],
                                                                          self.args['timeSteps']/skipLen, 
                                                                          self.args['batchSize'], 
                                                                          self.args['nUnits']*biDir,  
-                                                                         self.args['directionality'])'''
+                                                                         self.args['directionality'])
 
         # Finally, define the linear readout layer.
-        self.readout_W = tf.compat.v1.get_variable("readout_W",
+        self.readout_W = tf.get_variable("readout_W",
                                                    shape=[biDir * self.args['nUnits'], nOutputs],
                                                    initializer=tf.random_normal_initializer(dtype=tf.float32,
                                                                                             stddev=0.05),
                                                    trainable=bool(self.args['trainableBackEnd']))
 
-        self.readout_b = tf.compat.v1.get_variable("readout_b",
+        self.readout_b = tf.get_variable("readout_b",
                                                    shape=[nOutputs],
                                                    initializer=tf.zeros_initializer(dtype=tf.float32),
                                                    trainable=bool(self.args['trainableBackEnd']))
 
         tiledReadoutWeights = tf.tile(tf.expand_dims(self.readout_W, 0), [self.args['batchSize'], 1, 1])
-        # self.logitOutput_downsample = tf.matmul(self.rnnOutput2, tiledReadoutWeights) + self.readout_b
-
+        self.logitOutput_downsample = tf.matmul(self.rnnOutput2, tiledReadoutWeights) + self.readout_b
         # Up-sample the outputs to the original time-resolution (needed b/c layer 2 is slower).
         expIdx = []
         for t in range(int(args['timeSteps'] / skipLen)):
             expIdx.append(np.zeros([skipLen]) + t)
         expIdx = np.concatenate(expIdx).astype(int)
-        # self.logitOutput = tf.gather(self.logitOutput_downsample, expIdx, axis=1)
+        self.logitOutput = tf.gather(self.logitOutput_downsample, expIdx, axis=1)
 
         # --------------Loss function--------------
         # here we accounting for the output delay
         labels = self.batchTargets[:, 0:-(args['outputDelay']), :]
-        # logits = self.logitOutput[:,args['outputDelay']:,:]
+        logits = self.logitOutput[:, args['outputDelay']:, :]
         bw = self.batchWeight[:, 0:-(args['outputDelay'])]
 
         # character transition signal is the last column, which has a separate loss
-        # transOut = logits[:,:,-1]
+        transOut = logits[:, :, -1]
         transLabel = labels[:, :, -1]
 
-        # logits = logits[:,:,0:-1]
+        logits = logits[:, :, 0:-1]
         labels = labels[:, :, 0:-1]
 
         # cross-entropy character probability loss
-        # ceLoss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=labels, logits=logits)
-        #        self.totalErr = tf.reduce_mean(tf.reduce_sum(bw*ceLoss,axis=1)/self.args['timeSteps'])
+        ceLoss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=labels, logits=logits)
+        self.totalErr = tf.reduce_mean(tf.reduce_sum(bw*ceLoss, axis=1)/self.args['timeSteps'])
 
         # character start signal loss
-        # sqErrLoss = tf.square(tf.sigmoid(transOut)-transLabel)
-        # self.totalErr += 5*tf.reduce_mean(tf.reduce_sum(sqErrLoss,axis=1)/self.args['timeSteps'])
+        sqErrLoss = tf.square(tf.sigmoid(transOut)-transLabel)
+        self.totalErr += 5*tf.reduce_mean(tf.reduce_sum(sqErrLoss, axis=1)/self.args['timeSteps'])
 
         # L2 regularizer
         weightVars = [self.readout_W]
@@ -334,7 +330,7 @@ class charSeqRNN(object):
             weightVars.append(self.inputFactors_W_all[inpIdx])
 
         weightVars.extend(self.rnnWeightVars)
-        # weightVars.extend(self.rnnWeightVars2)
+        weightVars.extend(self.rnnWeightVars2)
 
         self.l2cost = tf.zeros(1, dtype=tf.float32)
         if self.args['l2scale'] > 0:
@@ -342,7 +338,7 @@ class charSeqRNN(object):
                 self.l2cost = self.l2cost + tf.reduce_sum(tf.square(weightVars[x]))
 
         # total cost
-        # self.totalCost = self.totalErr + self.l2cost*self.args['l2scale']
+        self.totalCost = self.totalErr + self.l2cost*self.args['l2scale']
 
         # --------------Gradient descent--------------
         # prepare gradients and optimizer
@@ -351,15 +347,15 @@ class charSeqRNN(object):
         # option to only allow the input layers to train
         if not bool(self.args['trainableBackEnd']):
             tvars.remove(self.rnnWeightVars[0])
-            # tvars.remove(self.rnnWeightVars2[0])
+            tvars.remove(self.rnnWeightVars2[0])
 
         # clip gradients to a maximum value of 10
-        #        grads = tf.gradients(self.totalCost, tvars)
-        #    grads, self.grad_global_norm = tf.clip_by_global_norm(grads, 10)
+        grads = tf.gradients(self.totalCost, tvars)
+        grads, self.grad_global_norm = tf.clip_by_global_norm(grads, 10)
 
         # optimization routine & learning rate
-        learnRate = tf.compat.v1.get_variable('learnRate', dtype=tf.float32, initializer=1.0, trainable=False)
-        opt = tf.compat.v1.train.AdamOptimizer(learnRate, beta1=0.9, beta2=0.999,
+        learnRate = tf.get_variable('learnRate', dtype=tf.float32, initializer=1.0, trainable=False)
+        opt = tf.train.AdamOptimizer(learnRate, beta1=0.9, beta2=0.999,
                                                epsilon=1e-01)
 
         self.new_lr = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
@@ -367,12 +363,12 @@ class charSeqRNN(object):
 
         # check if gradients are finite; if not, don't apply
         allIsFinite = []
-        #  for g in grads:
-        #  if g != None:
-        #     allIsFinite.append(tf.reduce_all(tf.is_finite(g)))
-        #  gradIsFinite = tf.reduce_all(tf.stack(allIsFinite))
-        #  self.train_op = tf.cond(gradIsFinite, lambda: opt.apply_gradients(
-        #   zip(grads, tvars), global_step=tf.compat.v1.train.get_or_create_global_step()), lambda: tf.no_op())
+        for g in grads:
+            if g != None:
+                allIsFinite.append(tf.reduce_all(tf.is_finite(g)))
+            gradIsFinite = tf.reduce_all(tf.stack(allIsFinite))
+            self.train_op = tf.cond(gradIsFinite, lambda: opt.apply_gradients(
+            zip(grads, tvars), global_step=tf.train.get_or_create_global_step()), lambda: tf.no_op())
 
         # Initialize all variables in the model, potentially loading them if self.loadingInitParams==True
         self._loadAndInitializeVariables()
@@ -382,7 +378,7 @@ class charSeqRNN(object):
         The main training loop, which we have implemented manually here. Each loop makes a single call to sess.run to execute
         one minibatch. ALong the way, we periodically save the model and performance statistics.
         """
-        saver = tf.compat.v1.train.Saver(max_to_keep=self.args['nCheckToKeep'])
+        saver = tf.train.Saver(max_to_keep=self.args['nCheckToKeep'])
 
         # Prepare to save performance data from each batch.
         batchTrainStats = np.zeros([self.args['nBatchesToTrain'], 6])
@@ -413,7 +409,7 @@ class charSeqRNN(object):
             dayNum = np.argwhere(np.random.multinomial(1, self.dayProbability))[0][0]
             datasetNum = 2 * dayNum  # 2*dayNum selects the train partition (as opposed to 2*dayNum + 1)
 
-            #    runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True, doGradientUpdate=True)
+            runResultsTrain = self._runBatch(datasetNum=datasetNum, dayNum=dayNum, lr=lr, computeGradient=True, doGradientUpdate=True)
 
             # compute the frame-by-frame accuracy for this batch
             #    trainAcc = computeFrameAccuracy(runResultsTrain['logitOutput'],
@@ -544,6 +540,8 @@ class charSeqRNN(object):
         Makes a single call to sess.run to execute one minibatch. Note that datasetNum and dayNum must be specified so we know
         which dataset to pull from (datasetNum) and which input layer to use (dayNum).
         """
+        print("Dataset number before feeding:", datasetNum)
+        print("Day number before feeding:", dayNum)
         fd = {self.new_lr: lr, self.datasetNumPH: int(datasetNum), self.dayNumPH: int(dayNum)}
         runOps = [self.totalErr, self.batchInputs, self.rnnOutput, self.batchTargets, self.logitOutput,
                   self.batchWeight]
@@ -744,12 +742,12 @@ def extractSentenceSnippet(inputs, targets, errWeight, numBinsPerTrial, nSteps, 
         [],
         minval=0,
         maxval=tf.maximum(numBinsPerTrial[0] + (nSteps - 100) - 400, 1),
-        dtype=tf.dtypes.int32)
+        dtype=tf.int32)
 
     inputsSnippet = inputs[randomStart:(randomStart + nSteps), :]
     targetsSnippet = targets[randomStart:(randomStart + nSteps), :]
 
-    charStarts = tf.where_v2(targetsSnippet[1:, -1] - targetsSnippet[0:-1, -1] >= 0.1)
+    charStarts = tf.where(targetsSnippet[1:, -1] - targetsSnippet[0:-1, -1] >= 0.1)
 
     def noLetters():
         ews = tf.zeros(shape=[nSteps])
@@ -823,9 +821,10 @@ def cudnnGraphSingleLayer(nUnits, initRNNState, batchInputs, nSteps, nBatch, nIn
     Construct a single GRU layer using tensorflow cudnn calls for speed and define the shape before runtime.
     Also return the weights so we can do L2 regularization.
     """
+    nSteps = int(nSteps)
     rnn_layer = tf.keras.layers.GRU(nUnits,
-                                    input_shape=(nBatch, nUnits),
-                                    batch_input_shape=(nBatch, nSteps, nInputs),
+                                    #input_shape=(nBatch, nUnits),
+                                    #batch_input_shape=(nBatch, nSteps, nInputs),
                                     return_sequences=True,
                                     return_state=False,
                                     recurrent_initializer='glorot_uniform',
@@ -838,9 +837,14 @@ def cudnnGraphSingleLayer(nUnits, initRNNState, batchInputs, nSteps, nBatch, nIn
 
     # taking care to transpose the inputs and outputs for compatibility with the rest of the code which is batch-first
     initState = tf.reshape(initRNNState, [nBatch, nUnits])
-    y = rnn_layer.__call__(batchInputs, initial_state=initState)
-
+    y = rnn_layer(batchInputs, initial_state=initState)
     # y = tf.transpose(y, [1, 0, 2])
+
+   # cudnnInput = tf.transpose(batchInputs, [1, 0, 2])
+   # y, state_cudnn = rnn_layer(batchInputs, initial_state=(initRNNState,))
+   # y = tf.transpose(y, [1, 0, 2])
+
+
 
     return y, rnn_layer.get_weights()[0]
 
