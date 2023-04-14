@@ -79,11 +79,9 @@ class charSeqRNN(object):
 
         config = tf.ConfigProto()
 
-        # Disable the arithmetic optimizer by setting the optimization_level to 0
-        config.graph_options.optimizer_options.opt_level = tf.OptimizerOptions.L0
+
         # Start tensorflow
-        self.sess = tf.Session(config=config)
-        self.sess.run(tf.global_variables_initializer())
+        self.sess = tf.Session()
 
         # --------------Dataset pipeline--------------
         # First we put the datasets on the graph. It's a bit tricky since we need to be able to select between different
