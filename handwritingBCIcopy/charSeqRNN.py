@@ -1,6 +1,8 @@
 import argparse
 import os
 from datetime import datetime
+import tensorflow as tf
+from tensorflow.contrib.framework.python.framework import checkpoint_utils
 import random
 import numpy as np
 import scipy.io
@@ -9,11 +11,10 @@ import scipy.special
 import pickle
 from dataPreprocessing import prepareDataCubesForRNN
 import sys
-import tensorflow as tf
 
-tf.reset_default_graph()
-#tf.disable_eager_execution()
-#tf.config.optimizer.set_jit(False)
+
+
+
 
 
 class charSeqRNN(object):
@@ -60,7 +61,7 @@ class charSeqRNN(object):
             if 'labelsFile_' + str(t) not in self.args.keys():
                 self.nDays = t
                 break
-        # TODO: remember to remove belowc
+
         # load data, labels, train/test partitions & synthetic .tfrecord files for all days
         neuralCube_all, targets_all, errWeights_all, numBinsPerTrial_all, cvIdx_all, recordFileSet_all = self._loadAllDatasets()
 
@@ -581,7 +582,7 @@ class charSeqRNN(object):
 
             # print variables in the checkpoint
             print('Loading from checkpoint: ' + checkpoint_path)
-            from tf.contrib.framework.python.framework import checkpoint_utils
+
 
             var_list_ckpt = checkpoint_utils.list_variables(checkpoint_path)
             var_names_ckpt = []
