@@ -595,7 +595,10 @@ class charSeqRNN(object):
             lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
             varDict = {}
             for x in range(len(lv)):
-                varDict[lv[x].name[:-2]] = lv[x]
+                try:
+                    varDict[lv[x].name[:-2]] = lv[x]
+                except:
+                    print()
 
             if self.args['mode'] == 'infer':
                 varDict['inputFactors_W_' + str(self.args['inferenceInputLayer'])] = self.inputFactors_W_all[0]
