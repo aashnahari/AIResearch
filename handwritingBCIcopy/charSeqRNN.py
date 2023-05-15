@@ -9,12 +9,11 @@ import scipy.io
 from scipy.ndimage.filters import gaussian_filter1d
 import scipy.special
 import pickle
+
+from tensorflow.python.keras.layers import CuDNNGRU
+
 from dataPreprocessing import prepareDataCubesForRNN
 import sys
-
-
-
-
 
 
 class charSeqRNN(object):
@@ -243,7 +242,7 @@ class charSeqRNN(object):
         # for the minibatch.
         def makeFactorsFunc(x):
             return lambda: (
-            self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
+                self.inputFactors_W_all[self.dayToLayerMap[x]], self.inputFactors_b_all[self.dayToLayerMap[x]])
 
         pred_fn_pairs_inpLayers = []
         for dayIdx in range(self.nDays):
@@ -583,7 +582,6 @@ class charSeqRNN(object):
             # print variables in the checkpoint
             print('Loading from checkpoint: ' + checkpoint_path)
 
-
             var_list_ckpt = checkpoint_utils.list_variables(checkpoint_path)
             var_names_ckpt = []
             for v in var_list_ckpt:
@@ -593,6 +591,10 @@ class charSeqRNN(object):
             # put together what variables we are going to load from what sources,
             # with special attention to how the inputFactors are determined
             lv = [self.readout_W, self.readout_b, self.rnnWeightVars[0], self.rnnWeightVars2[0], self.rnnStartState]
+            self.weights1 = tf.Variable(self.rnnWeightVars[0])
+            self.weights2 = tf.Variable(self.rnnWeightVars2[0])
+            self.sess.run(tf.global_variables_initializer())
+            lv = [self.readout_W, self.readout_b, self.weights1, self.weights2, self.rnnStartState]
             varDict = {}
             for x in range(len(lv)):
                 try:
