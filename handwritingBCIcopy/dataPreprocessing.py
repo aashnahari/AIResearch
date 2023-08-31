@@ -39,7 +39,7 @@ def prepareDataCubesForRNN(sentenceFile, singleLetterFile, labelFile, cvPartitio
                       
     errWeights = 1-labelsDat['ignoreErrorHere']
     charProbTarget = labelsDat['charProbTarget']
-    charStartTarget = labelsDat['charStartTarget'][:,:,np.newaxis]
+    charStartTarget = labelsDat['charStartTarget'][:, :, np.newaxis]
 
     #Here we update the error weights to ignore time bins outside of the sentence
     for t in range(labelsDat['timeBinsPerSentence'].shape[0]):
